@@ -1,0 +1,339 @@
+---
+title: "Rossmann Store Sales"
+author: "Aleksandra Gawor, Paulina Kulakowska"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plotly)
+library(tidyverse)
+library(data.table)
+library(MASS)
+library(tree)
+library(readr)
+library(e1071)
+library(zoo)
+library(forecast)
+library(dplyr)      
+library(ggplot2) 
+library(wesanderson)
+library(RColorBrewer)
+library(gridExtra)
+library(grid) 
+library(ggthemes)
+library(ggExtra)
+library(ggpubr)
+library(fmsb)
+library(dygraphs)
+library(xts)          
+```
+
+
+
+```{r , warning=FALSE}
+setwd("C:\\Users\\Ola\\Desktop\\Visualisation_R_Projekt")
+
+data <- read.csv('train.csv',
+                 colClasses=c("factor","factor","Date","integer","integer","factor",
+                              "factor","factor","factor"))
+
+```
+
+
+```{r , warning=FALSE}
+
+data[,6] <- data[,6] == 1
+data[,7] <- data[,7] == 1
+data[,9] <- data[,9] == 1
+
+setwd("C:\\Users\\Ola\\Desktop\\Visualisation_R_Projekt")
+store <- read.csv('store.csv',
+                  colClasses=c("factor","factor","factor","integer","integer","integer",
+                               "factor","integer","integer","factor"))
+
+store[,7] <- store[,7] == 1
+data <- data[data$Open,]
+summary(store)
+
+sum(is.na(data))
+```
+
+
+```{r , warning=FALSE}
+# imputing the mode
+store$CompetitionDistance[is.na(store$CompetitionDistance)] <- 250
+store$CompetitionOpenSinceMonth[is.na(store$CompetitionOpenSinceMonth)] <- 8
+store$CompetitionOpenSinceYear[is.na(store$CompetitionOpenSinceYear)] <- 2013
+store$Promo2SinceYear[is.na(store$Promo2SinceYear)] <- 2012
+store$Promo2SinceWeek[is.na(store$Promo2SinceWeek)] <- 22
+```
+
+```{r , warning=FALSE}
+# combining the store and sales data into one set
+sales <- merge(data, store, by = "Store")
+
+# we seperate month and year variables from date
+sales$Year <- as.factor(as.numeric(strftime(sales$Date, format="%y"))) 
+sales$Month <- as.factor(as.numeric(strftime(sales$Date, format="%m")))
+sales$Day <- as.factor(as.numeric(strftime(sales$Date, format="%d")))
+sales$Week <- as.factor(as.numeric(strftime(sales$Date, format="%W")))
+
+# instead of the number of a day in the week, we want their names
+Sys.setlocale("LC_TIME", "English")
+# name of the day
+sales$DayofWeek <- weekdays(sales$Date)
+sales <- sales[,-2] # we get rid off day of week in number
+sales$DayofWeek <- as.factor(sales$DayofWeek)
+
+# We randomly draw a sample to ease and fasten the computations and plotting
+set.seed(123)
+sales <- sales[sample(1:nrow(sales),
+                 size = 100000,
+                 replace = FALSE),]
+
+```
+
+```{r , warning=FALSE}
+# we want to order sales by dates
+sales <- sales[order(sales$Date),]
+
+```
+
+## Customers and Sales Correlation
+
+Exploring the given data, we see that Sales performance correlates with the number of customers:
+
+```{r , warning=FALSE}
+# Exploring the given data, we see that Sales performance correlates with the number of customers:
+
+sales.customers <- ggplot(sales, aes(x = Customers, y = Sales)) + 
+  geom_point(shape=1) +
+  geom_smooth(method=lm ,se=FALSE , colour="blue" , linetype="dashed") +
+  labs(title = "Customers vs. sales") +
+  theme_economist() +
+  theme(axis.title.x = element_text(face = "bold", size = 12) ,
+         axis.title.y = element_text(face = "bold", size = 12) ,
+         axis.ticks = element_blank(),
+         axis.title = element_text(size = 12))
+
+
+ggMarginal(sales.customers, type="density") 
+
+```
+
+The dispersion of correlation corresponds with different types of stores:
+
+```{r , warning=FALSE}
+cus.sales <- ggplot(sales, aes(x = Customers, y = Sales)) + 
+  geom_point(aes(colour = StoreType)) +
+  theme_economist() +
+  labs(title = "Customers vs. Sales") + 
+    theme(axis.title.x = element_text(face = "bold", size = 12) ,
+         axis.title.y = element_text(face = "bold", size = 12) ,
+         axis.ticks = element_blank(),
+         axis.title = element_text(size = 12))+
+  scale_color_manual(values=wes_palette(n=4, name="Royal1"))
+
+ggplotly(cus.sales)
+
+```
+
+This graph has a possibility to be animated (when our raptor is viewed as HTML or in RStudio environment). Graph was created with a help of plotly. It is an open source graphical library, which makes it very easy to create animated and user-friendly plots.
+
+## Exploring Sales by Store Type
+
+```{r , warning=FALSE}
+# Bar plot with multiple groups
+
+g1 <- ggplot(sales, aes(x = StoreType, fill = StoreType))+ 
+   geom_bar()+ 
+   geom_text(stat='count', aes(label=..count..), vjust=-0.5 ,size = 4) +
+  theme_economist() +
+  labs(title = "Customers vs. Sales") + 
+    theme(axis.title.x = element_text(face = "bold", size = 12) ,
+         axis.title.y = element_text(face = "bold", size = 12) ,
+         axis.ticks = element_blank(),
+         axis.title = element_text(size = 12))+
+  labs(x = "Store type", y = "Sales", title = "Sales by Type of Store")
+
+sales.store1 <- g1 + scale_fill_manual(values=wes_palette(n=4, name="Royal1"))
+
+sales.store1
+
+```
+
+
+```{r , warning=FALSE}
+sales.store2 <- ggplot(sales, aes(x = StoreType)) + 
+  geom_bar(aes(fill = Assortment)) +
+   theme_economist() +
+   geom_text(stat='count', aes(label=..count..), position=position_dodge(width=0.9),   vjust=-0.25,size = 4) +
+  labs(title = "Customers vs. Sales") + 
+    theme(axis.title.x = element_text(face = "bold", size = 12) ,
+         axis.title.y = element_text(face = "bold", size = 12) ,
+         axis.ticks = element_blank(),
+         axis.title = element_text(size = 12))+
+  labs(x = "Store type", y = "Sales", title = "Sales by Type of Store and Assortment")+
+  scale_fill_manual(values = wes_palette(n=3, name="Royal1"))
+
+sales.store2
+
+```
+
+
+```{r , warning=FALSE}
+# Geom_smooth
+# Promo vs. No-Promo sales
+# Multiple graphs
+
+plot1 <-ggplot(sales, 
+        aes(x = Date, y = Sales, color = factor(Promo))) +
+        labs(fill="Promo") + 
+        theme_economist() +
+        geom_smooth() +
+        facet_grid(. ~ Assortment)
+
+plot2 <-ggplot(sales, 
+        aes(x = Date, y = Sales, color = factor(Promo2))) + 
+        labs(fill="Promo2") +      
+        theme_economist() +
+        geom_smooth() +
+        facet_grid(. ~ Assortment)
+
+grid.arrange(arrangeGrob(plot1, plot2, ncol = 2), 
+                   top = "Promo vs. No-Promo Sales by Assortment")
+
+
+```
+
+## Mean Sales by Day-of-Week
+
+```{r , warning=FALSE}
+# Mean sales by day-of-week
+ggplot(sales, aes(x = DayofWeek, y = Sales, fill = DayofWeek)) + 
+  stat_summary(fun.y = "mean", geom = "bar") +
+   theme_economist(dkpanel = F) +
+        theme(legend.position = "none", 
+        legend.title=element_blank(),
+        axis.title.x = element_text(face = "bold", size = 12) ,
+        axis.title.y = element_text(face = "bold", size = 12) ,
+        axis.ticks = element_blank(),
+        axis.title = element_text(size = 12))+
+  scale_fill_brewer(palette = "Reds") 
+  labs(x = "Day of Week", y = "Sales", title = "Day Wise Average Sales")
+
+
+```
+
+
+## Customers that Visited Rossman 
+
+```{r , warning=FALSE}
+
+higher.customers <- sales[order(sales$Customers), ]
+higher.customers.1  <- tail(higher.customers, 1)
+
+promo.customers <- ggplot(data = sales, aes(x = factor(Day), y = Customers, fill = factor(Promo))) +
+  geom_bar(aes(label = Customers),na.rm = TRUE, position = position_dodge(), width = 0.9, stat = 'identity') +
+  geom_text(data = higher.customers.1, aes(label = Customers),
+               hjust = -0.2, vjust = 0) +
+  ggtitle('Customers that Visited Rossmann') +
+  xlab('Day') +
+  ylab('Customers') +
+  labs(fill = 'Promo') +
+  theme_economist() +
+  scale_fill_brewer(palette = "Reds") 
+
+promo.customers
+
+```
+
+This type of analysis to see the Customers that Visited Rossman was very important for us to include as a part of our report. As we know so far Rossman is a big company that has had a huge amount of sales during years 2013-2015. Our idea behind this graph was to see if the number of customers was bigger during the time of sales. Which from economical perspective would be very interesting for people to spend less money than more for the same good, or maybe more people decided to come to the store when sales were not included? 
+
+Our bar plot above have been divided to two types of bars that have sales and the one that don’t.  Bars as we can see are colour coded, darker pink bars represent value TRUE so that there were sales on that particular day. Lighter pink on the other hand represents value FALSE, which means that there were no sales on that day. We can see that the highest values on average are on the first day of each month and they are equal to 5145 and they actually don’t include sales. From the plot we can see that the number of darker bars and lighter once is pretty similar. 
+
+## Time Series Sales 
+
+```{r , warning=FALSE}
+
+df<-data.frame(time=data$Date,value=data$Sales)
+dy_data<-df %>% read.zoo() %>% as.xts()
+
+dygraph(dy_data) %>%
+     dySeries(label = "Sales") %>%
+  dyOptions(stackedGraph = TRUE , colors = RColorBrewer::brewer.pal(3, "Set1")) %>%
+  dyRangeSelector(height = 80)
+
+```
+
+
+
+Our data set is a time series data set, so we also decided to visualise how our time series behaves during the time that data have been collected.
+This graph has a possibility to be animated (when our raptor is viewed as HTML or in RStudio environment). Graph was created with a help of dygraph.One of the user-friendly features of this kind of a plot is a possibility to point our mouse on a selected part of the plot and it will show us the exact value which is in this case: number of observation and date of the observation. Another interesting feature of the plot is that with a bar situated at the bottom of the plot we can select the time period between years that we want to have a closer look at the moment. 
+
+From our plot it is possible to see that value of sales in general has not crossed the value of 15000 over the period plotted of years 2013-2015. When we take a look into data from one month in a plot, we can see a visible pattern. 
+
+Three times a month, our charts go upper. First up is visible at the beginning of the month, then around 16th and finally at the end. From our previous graphs we have concluded that those ups in the chart are caused by possible seasonal sales.  One of the examples that is valuable to look at is January 2013 it is very visible there that the first up is at 6th the next one at 13th, 20th and the last one at 27th. 
+
+
+
+## 100 Days When the Sales Were the Highest 
+
+```{r , warning=FALSE}
+
+
+order.sales <- sales[order(sales$Sales), ]
+order.sales.top.100  <- tail(order.sales, 100)
+order.sales.top.1  <- tail(order.sales, 1)
+#Highest sales 
+#100 days when the sales were the highest 
+
+ggplot(order.sales.top.100, aes(x = Date, y = Sales)) + 
+  geom_point(aes(colour = Promo)) +
+  theme_economist() +
+  geom_text(data = order.sales.top.1, aes(label = Date),
+               hjust = -0.2, vjust = 0) +
+  labs(title = "100 Days with Highest Sales") + 
+    theme(axis.title.x = element_text(face = "bold", size = 12) ,
+         axis.title.y = element_text(face = "bold", size = 12) ,
+         axis.ticks = element_blank(),
+         axis.title = element_text(size = 12))+
+  scale_color_manual(values=wes_palette(n=4, name="Royal1"))
+
+
+```
+
+Next graph that we wanted to discuss is the plot of 100 Days with highest sales over the period of two years. Observations on the graph have been divided to the option if it was a day with a sale or not. If the sale was during that day observation has a colour red with a name in the legend TRUE, if sale was not present during that day observation has a colour grey and in a legend is represented next to the word FALSE. 
+
+From the graph we can see that most of observations on the plot are red, from this we can assume that profits of Rossman company were higher during time of sales. Highest visible sale was on 16.12.2013, as we can see from the graph it was also a day of sales. This particular observation is way upper than others and we can see that it has a value much higher than 36000. 
+
+From the graph we can also see that during years 2014-2014 sales of the time when articles were not included in sales were very low, in the next year sales increased in cases when sales were included. From those observations we can assume that shop realized that their sales were not that high, so they implemented more occasions possible sales into their shops. 
+
+## Customers and Sales for Store Types
+
+```{r , warning=FALSE}
+
+ggplot(sales, aes(x=Promo, y=StoreType)) +
+  geom_count(mapping=aes(color=Sales, size=Customers)) +
+  theme_bw() +
+  scale_size(range = c(0, 8)) +
+  scale_y_discrete(name ="Store Type") +
+  guides(colour = guide_legend(override.aes = list(alpha = 1))) +
+  theme(axis.title.x = element_text(face = "bold", size = 12) ,
+        axis.title.y = element_text(face = "bold", size = 12) ,
+        axis.ticks = element_blank(),
+        axis.title = element_text(size = 12)) 
+
+```
+
+Next graph is Customers and Sales for Store Types. Idea behind this graph was to show on it as much as possible data, to use the power of R Visualisation. This graph was done with a help of package ggplot2. 
+
+On the right side of the plot there are two legends one of them shows number of sales and it is colour coded. The brighter the value on the plot the bigger it must be. On the other hand, the darker is the dot on the plot the smaller value it has. Other legend represented underneath Sales is Customers legend.
+
+We can see that this legend is also represented by dots but this time it is not colour coded, but size coded. The bigger is the dot on our graph the bigger is the number of customers during that time. This case is the same when it comes to smaller dots. The smaller is the dot the lower is the number of customers. 
+
+Next part of the plot is divided to TRUE and FALSE. This part represent that our data have been divided to the part including sales and the part that sales were not included. On the graph we have separated our observations to two columns to make this difference easily visible. 
+
+On the left side of the graph we have four different letters: a, b, c , d. Each of the letters represents a type of a store. When we look at our plot as a whole picture, we can see that it is easily to notice if the store has bigger number of customers and sales, at the same moment in our analysis we can also include if it was a day of sales. 
+From the plot we can see that the biggest number of customers was not during the sales time and it was in a store b. 
+
